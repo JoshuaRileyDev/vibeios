@@ -9,6 +9,11 @@ struct CreateProjectView: View {
     @State private var selectedDirectory = ""
     @State private var showingDirectoryPicker = false
     
+    init() {
+        // Set default directory to user's home directory
+        _selectedDirectory = State(initialValue: NSHomeDirectory())
+    }
+    
     var body: some View {
         NavigationView {
             Form {
@@ -18,25 +23,57 @@ struct CreateProjectView: View {
                 }
                 
                 Section(header: Text("Working Directory")) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Button(action: {
-                            showingDirectoryPicker = true
-                        }) {
-                            HStack {
-                                Image(systemName: "folder")
-                                Text(selectedDirectory.isEmpty ? "Choose Directory" : "Change Directory")
-                                Spacer()
-                                Image(systemName: "chevron.right")
-                                    .foregroundColor(.secondary)
+                    VStack(alignment: .leading, spacing: 12) {
+                        TextField("Enter directory path", text: $selectedDirectory)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .font(.system(.body, design: .monospaced))
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                        
+                        HStack {
+                            Button(action: {
+                                showingDirectoryPicker = true
+                            }) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: "folder")
+                                    Text("Browse...")
+                                }
+                                .font(.system(size: 14))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color.blue.opacity(0.1))
+                                .foregroundColor(.blue)
+                                .cornerRadius(8)
                             }
+                            
+                            Button(action: {
+                                selectedDirectory = NSHomeDirectory()
+                            }) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: "house")
+                                    Text("Home")
+                                }
+                                .font(.system(size: 14))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                                .background(Color.gray.opacity(0.1))
+                                .foregroundColor(.gray)
+                                .cornerRadius(8)
+                            }
+                            
+                            Spacer()
                         }
-                        .foregroundColor(.primary)
                         
                         if !selectedDirectory.isEmpty {
-                            Text(selectedDirectory)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .padding(.top, 4)
+                            HStack(spacing: 6) {
+                                Image(systemName: "info.circle")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                                Text("Directory: \(selectedDirectory)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .padding(.top, 4)
                         }
                     }
                 }
@@ -50,7 +87,7 @@ struct CreateProjectView: View {
                             Spacer()
                         }
                     }
-                    .disabled(projectName.isEmpty || selectedDirectory.isEmpty)
+                    .disabled(projectName.isEmpty)
                 }
             }
             .navigationTitle("New Project")

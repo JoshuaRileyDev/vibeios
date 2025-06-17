@@ -3,7 +3,11 @@ import SwiftUI
 struct ProjectDetailView: View {
     let project: Project
     @StateObject private var dataStore = DataStore.shared
+    @StateObject private var apiService = VibeTunnelAPIService.shared
     @State private var showingCreateAgent = false
+    @State private var sessions: [Session] = []
+    @State private var isRefreshing = false
+    @State private var refreshTimer: Timer?
     
     private var currentProject: Project? {
         dataStore.projects.first { $0.id == project.id }
@@ -38,14 +42,14 @@ struct ProjectDetailView: View {
                                 )
                                 StatsRowView(
                                     icon: "cpu.fill",
-                                    label: "Total Agents",
-                                    value: "\(currentProject.agents.count)",
+                                    label: "Total Sessions",
+                                    value: "\(sessions.count)",
                                     color: .blue
                                 )
                                 StatsRowView(
                                     icon: "play.circle.fill",
-                                    label: "Running Agents",
-                                    value: "\(currentProject.runningAgentsCount)",
+                                    label: "Running Sessions",
+                                    value: "\(sessions.filter { $0.status.lowercased() == "running" }.count)",
                                     color: .green
                                 )
                                 StatsRowView(
@@ -64,28 +68,28 @@ struct ProjectDetailView: View {
                         )
                         .padding(.horizontal, 16)
                         
-                        // Agents Section
+                        // Sessions Section
                         VStack(spacing: 16) {
                             HStack {
-                                Image(systemName: "brain.head.profile.fill")
+                                Image(systemName: "terminal.fill")
                                     .font(.system(size: 18, weight: .medium))
                                     .foregroundColor(.purple)
-                                Text("Agents")
+                                Text("Terminal Sessions")
                                     .font(.system(size: 18, weight: .semibold))
                                     .foregroundColor(.primary)
                                 Spacer()
                             }
                             .padding(.horizontal, 16)
                             
-                            if currentProject.agents.isEmpty {
+                            if sessions.isEmpty {
                                 VStack(spacing: 12) {
-                                    Image(systemName: "brain.head.profile")
+                                    Image(systemName: "terminal")
                                         .font(.system(size: 40))
                                         .foregroundColor(.secondary.opacity(0.5))
-                                    Text("No agents created yet")
+                                    Text("No sessions created yet")
                                         .font(.system(size: 16, weight: .medium))
                                         .foregroundColor(.secondary)
-                                    Text("Tap the + button to create your first agent")
+                                    Text("Tap the + button to create your first session")
                                         .font(.system(size: 14))
                                         .foregroundColor(.secondary.opacity(0.8))
                                         .multilineTextAlignment(.center)
@@ -99,9 +103,9 @@ struct ProjectDetailView: View {
                                 .padding(.horizontal, 16)
                             } else {
                                 LazyVStack(spacing: 12) {
-                                    ForEach(currentProject.agents) { agent in
-                                        NavigationLink(destination: AgentDetailView(projectId: currentProject.id, agent: agent)) {
-                                            AgentRowView(agent: agent)
+                                    ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
+                                        NavigationLink(destination: SessionDetailView(projectId: currentProject.id, session: session, agentNumber: index + 1)) {
+                                            SessionRowView(session: session, agentNumber: index + 1)
                                         }
                                         .buttonStyle(PlainButtonStyle())
                                         .padding(.horizontal, 16)
@@ -118,6 +122,13 @@ struct ProjectDetailView: View {
         .navigationTitle(project.name)
         .navigationBarTitleDisplayMode(.large)
         .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Refresh") {
+                    refreshSessions()
+                }
+                .disabled(isRefreshing)
+            }
+            
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button(action: {
                     showingCreateAgent = true
@@ -141,28 +152,69 @@ struct ProjectDetailView: View {
         .sheet(isPresented: $showingCreateAgent) {
             CreateAgentView(projectId: project.id)
         }
+        .onAppear {
+            refreshSessions()
+            startPeriodicRefresh()
+        }
+        .onDisappear {
+            stopPeriodicRefresh()
+        }
     }
     
-    private func deleteAgents(offsets: IndexSet, from project: Project) {
-        withAnimation {
-            for index in offsets {
-                let agent = project.agents[index]
-                dataStore.deleteAgent(from: project.id, agentId: agent.id)
+    private func refreshSessions() {
+        guard let currentProject = currentProject else { return }
+        
+        isRefreshing = true
+        
+        Task {
+            // Refresh sessions from API
+            await dataStore.refreshSessionsFromAPI()
+            
+            await MainActor.run {
+                self.sessions = dataStore.getSessionsForProject(currentProject)
+                self.isRefreshing = false
             }
         }
     }
+    
+    private func startPeriodicRefresh() {
+        // Refresh every 10 seconds when there are active sessions
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { _ in
+            if !sessions.isEmpty && apiService.isConnected {
+                refreshSessions()
+            }
+        }
+    }
+    
+    private func stopPeriodicRefresh() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+    }
+    
 }
 
-struct AgentRowView: View {
-    let agent: Agent
+struct SessionRowView: View {
+    let session: Session
+    let agentNumber: Int
+    
+    var statusColor: Color {
+        switch session.status.lowercased() {
+        case "running":
+            return .green
+        case "exited", "stopped":
+            return .red
+        default:
+            return .orange
+        }
+    }
     
     var body: some View {
         HStack(spacing: 16) {
-            // Agent Icon
+            // Agent Number Icon
             ZStack {
                 RoundedRectangle(cornerRadius: 12)
                     .fill(LinearGradient(
-                        colors: agent.isRunning ? 
+                        colors: session.status.lowercased() == "running" ? 
                             [Color.green.opacity(0.8), Color.mint.opacity(0.8)] :
                             [Color.gray.opacity(0.6), Color.gray.opacity(0.8)],
                         startPoint: .topLeading,
@@ -170,86 +222,50 @@ struct AgentRowView: View {
                     ))
                     .frame(width: 44, height: 44)
                 
-                Image(systemName: "brain.head.profile")
-                    .font(.system(size: 18, weight: .medium))
+                Text("\(agentNumber)")
+                    .font(.system(size: 18, weight: .bold))
                     .foregroundColor(.white)
             }
             
             VStack(alignment: .leading, spacing: 6) {
                 HStack {
-                    Text(agent.name)
+                    Text("Agent \(agentNumber)")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundColor(.primary)
                     
                     Spacer()
                     
-                    if agent.isRunning {
-                        HStack(spacing: 4) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.green.opacity(0.2))
-                                    .frame(width: 16, height: 16)
-                                Circle()
-                                    .fill(Color.green)
-                                    .frame(width: 6, height: 6)
-                                    .scaleEffect(1.0)
-                                    .animation(
-                                        Animation.easeInOut(duration: 1.0).repeatForever(autoreverses: true),
-                                        value: agent.isRunning
-                                    )
-                            }
-                            Text("Running")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundColor(.green)
-                        }
+                    Text(session.status.uppercased())
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundColor(statusColor)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .background(Color.green.opacity(0.1))
+                        .background(statusColor.opacity(0.1))
                         .cornerRadius(8)
-                    } else {
-                        Text("Idle")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 3)
-                            .background(Color.gray.opacity(0.1))
-                            .cornerRadius(8)
-                    }
                 }
                 
-                Text(agent.description)
-                    .font(.system(size: 13))
+                Text(session.command)
+                    .font(.system(size: 13, design: .monospaced))
                     .foregroundColor(.secondary)
-                    .lineLimit(2)
+                    .lineLimit(1)
                 
-                if agent.isRunning && agent.progress > 0 {
-                    VStack(spacing: 4) {
-                        HStack {
-                            Image(systemName: "chart.line.uptrend.xyaxis")
+                HStack(spacing: 8) {
+                    if let pid = session.pid {
+                        HStack(spacing: 4) {
+                            Image(systemName: "number")
                                 .font(.system(size: 8))
                                 .foregroundColor(.blue)
-                            Text("Progress: \(Int(agent.progress * 100))%")
+                            Text("PID: \(pid)")
                                 .font(.system(size: 10, weight: .medium))
                                 .foregroundColor(.blue)
-                            Spacer()
                         }
-                        
-                        ProgressView(value: agent.progress)
-                            .progressViewStyle(LinearProgressViewStyle(tint: .blue))
-                            .scaleEffect(y: 0.8)
                     }
-                }
-                
-                if let lastPrompt = agent.lastPrompt {
-                    HStack(spacing: 4) {
-                        Image(systemName: "bubble.left.fill")
-                            .font(.system(size: 8))
-                            .foregroundColor(.purple)
-                        Text(lastPrompt)
-                            .font(.system(size: 10))
-                            .foregroundColor(.purple)
-                            .lineLimit(1)
-                    }
+                    
+                    Spacer()
+                    
+                    Text(session.id.prefix(8))
+                        .font(.system(size: 8, design: .monospaced))
+                        .foregroundColor(.secondary)
                 }
             }
         }

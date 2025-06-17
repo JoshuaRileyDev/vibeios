@@ -2,7 +2,9 @@ import SwiftUI
 
 struct ProjectsListView: View {
     @StateObject private var dataStore = DataStore.shared
+    @StateObject private var apiService = VibeTunnelAPIService.shared
     @State private var showingCreateProject = false
+    @State private var showingSettings = false
     
     var body: some View {
         NavigationView {
@@ -14,16 +16,46 @@ struct ProjectsListView: View {
                     LazyVStack(spacing: 0) {
                         ForEach(dataStore.projects) { project in
                             NavigationLink(destination: ProjectDetailView(project: project)) {
-                                ProjectRowView(project: project)
+                                let runningSessions = dataStore.getSessionsForProject(project) // Only running sessions now
+                                ProjectRowView(
+                                    project: project, 
+                                    runningAgents: runningSessions.count,
+                                    totalAgents: runningSessions.count // Same since we only show running
+                                )
                             }
                             .buttonStyle(PlainButtonStyle())
                         }
                     }
                     .padding(.top, 16)
+                    .refreshable {
+                        await dataStore.refreshSessionsFromAPI()
+                    }
                 }
             }
             .navigationTitle("Projects")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    HStack(spacing: 12) {
+                        Button(action: {
+                            showingSettings = true
+                        }) {
+                            Image(systemName: "gear")
+                                .font(.system(size: 18, weight: .medium))
+                                .foregroundColor(.primary)
+                        }
+                        
+                        // Connection status indicator
+                        HStack(spacing: 6) {
+                            Circle()
+                                .fill(apiService.isConnected ? Color.green : Color.red)
+                                .frame(width: 8, height: 8)
+                            Text("VibeTunnel")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(apiService.isConnected ? .green : .red)
+                        }
+                    }
+                }
+                
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
                         showingCreateProject = true
@@ -47,6 +79,14 @@ struct ProjectsListView: View {
             .sheet(isPresented: $showingCreateProject) {
                 CreateProjectView()
             }
+            .sheet(isPresented: $showingSettings) {
+                SettingsView()
+            }
+            .onAppear {
+                Task {
+                    await dataStore.refreshSessionsFromAPI()
+                }
+            }
         }
     }
     
@@ -61,6 +101,8 @@ struct ProjectsListView: View {
 
 struct ProjectRowView: View {
     let project: Project
+    let runningAgents: Int
+    let totalAgents: Int
     
     var body: some View {
         HStack(spacing: 16) {
@@ -87,7 +129,7 @@ struct ProjectRowView: View {
                     
                     Spacer()
                     
-                    if project.runningAgentsCount > 0 {
+                    if runningAgents > 0 {
                         HStack(spacing: 6) {
                             ZStack {
                                 Circle()
@@ -99,10 +141,10 @@ struct ProjectRowView: View {
                                     .scaleEffect(1.0)
                                     .animation(
                                         Animation.easeInOut(duration: 1.0).repeatForever(autoreverses: true),
-                                        value: project.runningAgentsCount
+                                        value: runningAgents
                                     )
                             }
-                            Text("\(project.runningAgentsCount)")
+                            Text("\(runningAgents)")
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundColor(.green)
                         }
@@ -128,7 +170,7 @@ struct ProjectRowView: View {
                         Image(systemName: "cpu.fill")
                             .font(.system(size: 10))
                             .foregroundColor(.blue)
-                        Text("\(project.agents.count) agents")
+                        Text("\(totalAgents) sessions")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundColor(.blue)
                     }
